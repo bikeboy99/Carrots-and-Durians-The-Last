@@ -45,18 +45,19 @@ class Firewall (object):
     """
     
     # Banned port
+    ip_and_port = str(flow.dst) + ':' + str(flow.dstport)
     if flow.dstport < self.BASIC_PORTS:
         event.action.forward = True
         log.debug("Allowed connection: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
         if(flow.dstport == 21):
-            log.debug("FTPcmd connection marked for monitoring.  Data: " + packet.payload.payload.payload)
+            log.debug("FTPcmd connection marked for monitoring.")
             self.mark_monitored(event, flow)
         return
-    elif str(flow.dstport) in self.allowed_ports:
-        log.debug("Allowed FTP data connection to connect.  Port: " + str(flow.dstport))
+    elif ip_and_port in self.allowed_ports:
+        log.debug("Allowed FTP data connection to connect.  Port: " + ip_and_port)
         #remove once 1 TCP connection is made
         #cancel timer here??? maybe?
-        self.allowed_ports.remove(str(flow.dstport))
+        self.allowed_ports.remove(ip_and_port)
         event.action.forward = True
         return
     else:
@@ -74,29 +75,38 @@ class Firewall (object):
     ip = packet.payload
     tcp = ip.payload
     data = tcp.payload
-    if(data[0:4] == '229-'):
-        data = data.split('|')
-        if(len(data) == 5 and len(data[3]) > 3):
-            if(self.timers[port]):
-                selt.timers[port].cancel()
-            port = data[3]
-            self.open_port_with_timeout(port, self.TIMEOUT)
-            #self.monitored_connections.remove(IPStr)
-    elif(data[0:3] == '229'):
+    #TODO: handle line split or line padded cases
+    #handles padded case??
+    data = data.strip()
+    if(data[0:3] == '229'):
         data = data.split('|')
         port = data[3]
-        self.open_port_with_timeout(port, self.TIMEOUT)
+        #not sure about reverse, not sure if IP will be formatted correctly
+        if(reverse):
+            IP = ip.srcip.toStr()
+        else:
+            IP = ip.dstip.toStr()
+        self.open_port_with_timeout(port, IP, self.TIMEOUT)
         #self.monitored_connections.remove(IPStr)
-    
-  def open_port_with_timeout(self, port, timeout):
-    log.debug("Opening port: " + port)
+    elif(data[0:3]  == '227'):
+        data = data.split('(')
+        csvs = data[len(data)-1].split(')')[0] 
+        log.debug("Csv: " + '---'.join(csvs))
+        ip_and_port = csvs.split(',')
+        IP = ip_and_port[0]+'.'+ip_and_port[1]+'.'+ip_and_port[2]+'.'+ip_and_port[3]
+        port = str(int(ip_and_port[4])*256+int(ip_and_port[5]))
+        self.open_port_with_timeout(port, IP, self.TIMEOUT)
+        
+  def open_port_with_timeout(self, port, IP, timeout):
+    ip_and_port = IP + ':' + port
+    log.debug("Opening port: " + ip_and_port)
     try:
-        if(self.timers[port]):
-            selt.timers[port].cancel()
+        if(self.timers[ip_and_port]):
+            selt.timers[ip_and_port].cancel()
     except KeyError:
         pass
-    self.allowed_ports.add(port)
-    self.timers[port] = Timer(timeout, self.handle_timeout, args = [port])
+    self.allowed_ports.add(ip_and_port)
+    self.timers[str(IP) + str(ip_and_port)] = Timer(timeout, self.handle_timeout, args = [ip_and_port])
     
   def mark_monitored(self, event, flow):
     #IPStr = flow.dst.toStr() + ',' + str(flow.dstport) + ',' + flow.src.toStr() + ',' + str(flow.srcport)
@@ -112,7 +122,8 @@ class Firewall (object):
     #TODO: only monitor backwards (incoming) traffic?
     event.action.monitor_backward = True
         
-  def handle_timeout(self, port):
-    log.debug("Port timeout: " + port)
-    self.allowed_ports.remove(port)
-    del(self.timers[port])   
+  def handle_timeout(self, ip_and_port):
+    if(ip_and_port in self.allowed_ports):
+        log.debug("Port timeout: " + ip_and_port)
+        self.allowed_ports.remove(ip_and_port)
+    del(self.timers[ip_and_port])
