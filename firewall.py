@@ -107,6 +107,8 @@ class Firewall (object):
         if(not IPtup in self.buffers.keys()):
             self.buffers[IPtup] = {}
             
+    #clear buffer
+    self.buffers[IPtup][str(tcp.srcport)] = ''
     #now split line based on newline  
     split = data.splitlines()
     #if no EOL at end of string add it to buffer instead of processing now
