@@ -14,7 +14,7 @@ class Firewall (object):
   Don't change the name or anything -- the eecore component
   expects it to be firewall.Firewall.
   """
-  
+  PRINT_BUFFERS = False
   TIMEOUT = 10
   BASIC_PORTS = 1024
   
@@ -60,7 +60,7 @@ class Firewall (object):
         if(flow.dstport == 21):
             #connection doesn't already exist
             if(IPtuple in self.allowed_ports.keys()):
-                log("Duplicate FPT connection BLOCKED: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
+                log.debug("Duplicate FPT connection BLOCKED: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
                 event.action.deny = True
             else:
                 self.allowed_ports[IPtuple] = {}
@@ -77,11 +77,7 @@ class Firewall (object):
                 log.debug("Allowed FTP data connection to connect: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
                 #remove once 1 TCP connection is made
                 #cancel timer here??? maybe?
-                self.allowed_ports[IPtuple][srcport].remove(port)
-                if(len(self.allowed_ports[IPtuple][srcport]) == 0):
-                    del(self.allowed_ports[IPtuple][srcport])
-                if(len(self.allowed_ports[IPtuple].keys())==0):
-                    del(self.allowed_ports[IPtuple])
+                self.remove_port(IPtuple, srcport, port)
                 event.action.forward = True
                 return
     else:
@@ -98,24 +94,40 @@ class Firewall (object):
         IPtup = (ip.srcip.toStr(), ip.dstip.toStr())
     else:
         IPtup = (ip.dstip.toStr(), ip.srcip.toStr())
-    
+        
     try:
         data = self.buffers[IPtup][str(tcp.srcport)] + data    
     except KeyError:
         #first time initializing buffer
-        log.debug("Initializing Buffer for: " + IPtup[0])
+        if(self.PRINT_BUFFERS):
+            log.debug("Initializing Buffer for: " + IPtup[0])
         if(not IPtup in self.buffers.keys()):
             self.buffers[IPtup] = {}
-            
-    #clear buffer
-    self.buffers[IPtup][str(tcp.srcport)] = ''
+            self.buffers[IPtup][str(tcp.srcport)] = ''
+    if(self.PRINT_BUFFERS):
+        log.debug("Data: " + data)
+        log.debug("Old Buffer: " + self.buffers[IPtup][str(tcp.srcport)])   
+    
     #now split line based on newline  
     split = data.splitlines()
+    if(self.PRINT_BUFFERS):
+        log.debug("Split: " '---'.join(split))
     #if no EOL at end of string add it to buffer instead of processing now
     if(data != '' and data[-1] != '\n'):
-        self.buffers[IPtup][str(tcp.srcport)] = split[len(split)-1]
+        end = split[len(split)-1]
+        #no newline characters in data.  Add to previous buffer
+        if(len(split) == 1 and data != '' and data[0] != '\n'):
+            self.buffers[IPtup][str(tcp.srcport)] += end
+        #otherwise, reset the buffer and add the end part to it
+        else:
+            self.buffers[IPtup][str(tcp.srcport)] = end
+        #so buffer isn't processed
         split = split[0:len(split)-1]
-        
+    else:
+        self.buffers[IPtup][str(tcp.srcport)] = ''
+    if(self.PRINT_BUFFERS):
+        log.debug("Old Buffer: " + self.buffers[IPtup][str(tcp.srcport)])
+    
     for line in split:
         #TODO: handle line split or line padded cases
         #handles padded case??
@@ -143,13 +155,15 @@ class Firewall (object):
                 del(self.allowed_ports[IPtup][str(tcp.srcport)])
             except KeyError:
                 pass
+            if(IPtup in self.allowed_ports.keys() and len(self.allowed_ports[IPtup].keys()) == 0):
+                del(self.allowed_ports[IPtup])
             
   def open_port_with_timeout(self, port, IPtup, srcport, timeout):
     ip_and_ports = (IPtup, srcport,  port)
     log.debug("Opening port: " + IPtup[0] + ':' + port)
     try:
         if(self.timers[ip_and_ports]):
-            selt.timers[ip_and_ports].cancel()
+            self.timers[ip_and_ports].cancel()
     except KeyError:
         pass
     if(not IPtup in self.allowed_ports.keys()):
@@ -177,9 +191,15 @@ class Firewall (object):
     ip_and_port = (IPtup, srcport, port)
     if(IPtup in self.allowed_ports.keys() and srcport in self.allowed_ports[IPtup].keys()):
         log.debug("Port timeout: " + IPtup[0] + ':' + port)
-        self.allowed_ports[IPtup][srcport].remove(port)
-        if(len(self.allowed_ports[IPtup][srcport]) == 0):
-            del(self.allowed_ports[IPtup][srcport])
-        if(len(self.allowed_ports[IPtup].keys())==0):
-            del(self.allowed_ports[IPtup])
+        self.remove_port(IPtup, srcport, port)
     del(self.timers[ip_and_port])
+    
+  def remove_port(self, IPtup, srcport, port):
+    try:
+        self.allowed_ports[IPtup][srcport].remove(port)
+    except KeyError:
+        pass
+    if(len(self.allowed_ports[IPtup][srcport]) == 0):
+        del(self.allowed_ports[IPtup][srcport])
+    if(len(self.allowed_ports[IPtup].keys())==0):
+        del(self.allowed_ports[IPtup])
