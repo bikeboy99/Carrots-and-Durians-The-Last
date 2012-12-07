@@ -39,6 +39,10 @@ class Firewall (object):
     #    v: set of allowed ports for these three values
     self.allowed_ports = {}
     
+    
+    #dict that contains buffers for each connection.  
+    #Two tiers of dictionaries with same keys as self.allowed_ports
+    self.buffers = {}
     log.debug("Firewall initialized.")
 
   def _handle_ConnectionIn (self, event, flow, packet):
@@ -86,50 +90,58 @@ class Firewall (object):
         return
 
   def _handle_MonitorData (self, event, packet, reverse):
-    #if(not reverse):
-    #    IPStr = ip.dstip.toStr() + ',' + str(tcp.dstport) + ',' + ip.srcip.toStr() + ',' + str(tcp.srcport)
-    #else:
-    #    IPStr = ip.srcip.toStr() + ',' + str(tcp.srcport) + ',' + ip.dstip.toStr() + ',' + str(tcp.dstport)
-    
-    #if(IPStr in self.monitored_connections):     
     ip = packet.payload
     tcp = ip.payload
     data = tcp.payload
-    #TODO: handle line split or line padded cases
-    #handles padded case??
-    data = data.strip()
-    if(data[0:3] == '229'):
-        data = data.split('|')
-        port = data[len(data)-2]
-        #not sure about reverse, not sure if IP will be formatted correctly
-        if(reverse):
-            IPtup = (ip.srcip.toStr(), ip.dstip.toStr())
-        else:
-            IPtup = (ip.dstip.toStr(), ip.srcip.toStr())
-        self.open_port_with_timeout(port, IPtup, str(tcp.srcport), self.TIMEOUT)
-        #self.monitored_connections.remove(IPStr)
-    elif(data[0:3]  == '227'):
-        data = data.split('(')
-        csvs = data[len(data)-1].split(')')[0] 
-        ip_and_port = csvs.split(',')
-        IP = ip_and_port[0]+'.'+ip_and_port[1]+'.'+ip_and_port[2]+'.'+ip_and_port[3]
-        if(reverse):
-            IPtup = (IP, ip.dstip.toStr())
-        else:
-            IPtup = (IP, ip.srcip.toStr())
-        port = str(int(ip_and_port[4])*256+int(ip_and_port[5]))
-        self.open_port_with_timeout(port, IPtup, str(tcp.srcport), self.TIMEOUT)
-    elif(data[0:3] == '226'):
-        #close port before timeout
-        if(reverse):
-            IPtup = (ip.srcip.toStr(), ip.dstip.toStr())
-        else:
-            IPtup = (ip.dstip.toStr(), ip.srcip.toStr())
-        try:
-            del(self.allowed_ports[IPtup][str(tcp.srcport)])
-        except KeyError:
-            pass
+    
+    if(reverse):
+        IPtup = (ip.srcip.toStr(), ip.dstip.toStr())
+    else:
+        IPtup = (ip.dstip.toStr(), ip.srcip.toStr())
+    
+    try:
+        data = self.buffers[IPtup][str(tcp.srcport)] + data    
+    except KeyError:
+        #first time initializing buffer
+        log.debug("Initializing Buffer for: " + IPtup[0])
+        if(not IPtup in self.buffers.keys()):
+            self.buffers[IPtup] = {}
+            
+    #now split line based on newline  
+    split = data.splitlines()
+    #if no EOL at end of string add it to buffer instead of processing now
+    if(data != '' and data[-1] != '\n'):
+        self.buffers[IPtup][str(tcp.srcport)] = split[len(split)-1]
+        split = split[0:len(split)-1]
         
+    for line in split:
+        #TODO: handle line split or line padded cases
+        #handles padded case??
+        #line = line.strip()
+        if(line[0:4] == '229 '):
+            line = line.split('|')
+            port = line[len(line)-2]
+            #not sure about reverse, not sure if IP will be formatted correctly
+            self.open_port_with_timeout(port, IPtup, str(tcp.srcport), self.TIMEOUT)
+            #self.monitored_connections.remove(IPStr)
+        elif(line[0:4]  == '227 '):
+            line = line.split('(')
+            csvs = line[len(line)-1].split(')')[0] 
+            ip_and_port = csvs.split(',')
+            IP = ip_and_port[0]+'.'+ip_and_port[1]+'.'+ip_and_port[2]+'.'+ip_and_port[3]
+            if(reverse):
+                IPtup = (IP, ip.dstip.toStr())
+            else:
+                IPtup = (IP, ip.srcip.toStr())
+            port = str(int(ip_and_port[4])*256+int(ip_and_port[5]))
+            self.open_port_with_timeout(port, IPtup, str(tcp.srcport), self.TIMEOUT)
+        elif(line[0:4] == '226 '):
+            #close port before timeout
+            try:
+                del(self.allowed_ports[IPtup][str(tcp.srcport)])
+            except KeyError:
+                pass
+            
   def open_port_with_timeout(self, port, IPtup, srcport, timeout):
     ip_and_ports = (IPtup, srcport,  port)
     log.debug("Opening port: " + IPtup[0] + ':' + port)
