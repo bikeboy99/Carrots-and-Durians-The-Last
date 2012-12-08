@@ -122,7 +122,7 @@ class Firewall (object):
         if(data != '' and data[-1] != '\n'):
             end = split[len(split)-1]
             server_buffers[srcport] = end
-            #so buffer isn't processed
+            #so end isn't processed, because we want it in buffer instead
             split = split[0:len(split)-1]
         #if there is a newline at the end of our data, clear our buffer for next time 
         elif(data[-1] == '\n'):
@@ -132,28 +132,31 @@ class Firewall (object):
         
         #for each individual line in our data
         for line in split:
-            #EPSV mode
-            if(line[0:4] == '229 '):
-                line = line.split('|')
-                #port should always be in 2nd to last partition based on spec and | as delimiter
-                port = line[len(line)-2]
-                self.open_port_with_timeout(port, IPtup, self.TIMEOUT)
-            elif(line[0:4]  == '227 '):
-                line = line.split('(')
-                #take the rightmost partition from a split based on open parens
-                csvs = line[len(line)-1].split(')')[0] 
-                #take the leftmost entry from a split based on closed parens.  This gives us our csv
-                ip_and_port = csvs.split(',')
-                #if there aren't 6 csv entries, don't do anything
-                if(len(ip_and_port) == 6):
-                    IP = ip_and_port[0]+'.'+ip_and_port[1]+'.'+ip_and_port[2]+'.'+ip_and_port[3]
-                    #assign IPtup again, since we are given a specific IP for 227
-                    if(reverse):
-                        IPtup = (IP, ip.dstip.toStr())
-                    else:
-                        IPtup = (IP, ip.srcip.toStr())
-                    port = str(int(ip_and_port[4])*256+int(ip_and_port[5]))
-                    self.open_port_with_timeout(port, IPtup, self.TIMEOUT)
+            try:
+                if(len(line) > 3):
+                    if(line[0:4] == '229 '):
+                        line = line.split('|')
+                        #port should always be in 2nd to last partition based on spec and | as delimiter
+                        port = line[len(line)-2]
+                        self.open_port_with_timeout(port, IPtup, self.TIMEOUT)
+                    elif(line[0:4]  == '227 '):
+                        line = line.split('(')
+                        #take the rightmost partition from a split based on open parens
+                        csvs = line[len(line)-1].split(')')[0] 
+                        #take the leftmost entry from a split based on closed parens.  This gives us our csv
+                        ip_and_port = csvs.split(',')
+                        #if there aren't 6 csv entries, don't do anything
+                        if(len(ip_and_port) == 6):
+                            IP = ip_and_port[0]+'.'+ip_and_port[1]+'.'+ip_and_port[2]+'.'+ip_and_port[3]
+                            #assign IPtup again, since we are given a specific IP for 227
+                            if(reverse):
+                                IPtup = (IP, ip.dstip.toStr())
+                            else:
+                                IPtup = (IP, ip.srcip.toStr())
+                            port = str(int(ip_and_port[4])*256+int(ip_and_port[5]))
+                            self.open_port_with_timeout(port, IPtup, self.TIMEOUT)
+            except:
+                pass
     except:
         pass
             
