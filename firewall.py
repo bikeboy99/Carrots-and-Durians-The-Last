@@ -58,7 +58,7 @@ class Firewall (object):
         event.action.forward = True
         if(flow.dstport == 21):
             log.debug("Allowed FTPcmd connection: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
-            self.mark_monitored(event, flow)
+            event.action.monitor_backward = True
         else:
             log.debug("Allowed connection: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
         return
@@ -105,7 +105,6 @@ class Firewall (object):
         
         try:
             data = server_buffers[srcport] + data
-            # Possible problem here    
         except KeyError:
             #first time initializing buffer
             server_buffers[srcport] = ''
@@ -190,20 +189,6 @@ class Firewall (object):
     if(ip_and_ports not in self.timers.keys()):
         self.timers[ip_and_ports] = []
     self.timers[ip_and_ports].append(Timer(timeout, self.handle_timeout, args = [IPtup, port]))
-    
-  def mark_monitored(self, event, flow):
-    #IPStr = flow.dst.toStr() + ',' + str(flow.dstport) + ',' + flow.src.toStr() + ',' + str(flow.srcport)
-    #Same conneciton already exists!
-    #if IPStr in self.monitored_connections:
-    #    log.debug("Old connection still exists.  Resetting options.")
-    #else:
-    #    self.monitored_connections.add(IPStr)
-    
-    #monitor this connection in both directions
-    #event.action.monitor_forward = True
-    
-    #TODO: only monitor backwards (incoming) traffic?
-    event.action.monitor_backward = True
         
   def handle_timeout(self, IPtup, port):
     ip_and_ports = (IPtup, port)
