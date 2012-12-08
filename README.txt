@@ -4,21 +4,12 @@ Soohwang (Paul) Yeem -nd
 
 2. 
 Some problems/challenges that we faced were:
--Designing the control path
-We had to change our intended implementation several times because of this.
-At first we thought that a packet's path to handle_monitorData was connectionIn -> deferredConnection -> monitorData.
-A case we missed was it was possible to go to monitorData from connectionIn, so monitorData needed to handle both cases
-instead of assuming that every connection that came to monitorData came from deferredConnection
 
--Regex matching for part 3
-Until we read from Piazza that we can store O(sum of match strings) in the buffer,
-we were trying to only work with having O(largest match string), storing inbound and outbound "buffer" in a wrapper class.
-For the test case on Piazza with 180 'a's, we were failing because we only kept 1 "buffer" for all search strings, and there were cases that 
-When we realized above, we instead made a dictionary for each substring that stores respective buffer for each match string.
-Realizing the above fact made our lives MUCH MUCH EASIER.
+-stitching packets together
+We weren't sure packet stitching was going to be on this project like it was on the last one, so initially we didn't implement packet stitching in our solution.  Luckily we didn't have to change our code too much when we found out stitching had to happen.  Also, the FTP spec that states a \r\n or \n must be on the end of every line was very helpful (otherwise it would have been nearly impossible to know when a line ends!) We went ahead and implemented a buffer for each ftp command connection.  This buffer held any data that wasn't part of a full line yet, so this way we could handle multiple packets with non-full lines.  Once we had a full line, we processed it.
 
--Storing and updating timer properly
-One bug that we caught last was having a "dangling" timer. 
-There was a case that a timer never got cancelled (though we reset with a new timer for a connection),
-so our firewall was crashing because we were trying to clean up something that was already cleaned.  
-We cancelled and got rid of the old timer when a connection was rereshed. 
+-parsing the lines:
+This proved to be a tricky problem that we initially tried to solve without regex.  However, there were so many cases to cover without using a regex that we decided to revamp the code and use some clever regex searches to sort out malformed lines from correct ones.
+
+-timers
+Initially, we thought each port only had to have one timer associated with it.  Then we found out that multiple FTPdata connections could queue up for a single open port.  This meant we had to change our dictionary of timers into a dictionary of lists of timers.  We thought we werer going to have to keep count of the number of times a port was opened, but thankfully a 1:1 relation between timers and the opening of a port made it fairly easy to check when the port was closed (no timers left in the list!)
