@@ -54,6 +54,7 @@ class Firewall (object):
     IPtuple = (str(flow.dst), str(flow.src))
     port = str(flow.dstport)
     if flow.dstport < self.BASIC_PORTS:
+        event.action.forward = True
         if(flow.dstport == 21):
             #connection doesn't already exist
             #if(IPtuple in self.allowed_ports.keys()):
@@ -62,10 +63,8 @@ class Firewall (object):
             #else:
             log.debug("Allowed FTPcmd connection: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
             self.mark_monitored(event, flow)
-            event.action.forward = True
         else:
             log.debug("Allowed connection: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
-            event.action.forward = True
         return
     elif IPtuple in self.allowed_ports.keys() and flow.dstport < self.FTP_PORTS:
         log.debug("IP with allowed ports: " + IPtuple[0])
@@ -103,16 +102,21 @@ class Firewall (object):
             IPtup = (ip.srcip.toStr(), ip.dstip.toStr())
         else:
             IPtup = (ip.dstip.toStr(), ip.srcip.toStr())
-            
+        
+        try:            
+            server_buffers = self.buffers[IPtup]
+        except KeyError:
+            self.buffers[IPtup] = {}
+            server_buffers = self.buffers[IPtup]
+        
         try:
-            data = self.buffers[IPtup][srcport] + data    
+            data = server_buffers[srcport] + data
+            # Possible problem here    
         except KeyError:
             #first time initializing buffer
+            server_buffers[srcport] = ''
             if(self.PRINT_BUFFERS):
                 log.debug("Initializing Buffer for: " + IPtup[0])
-            if(not IPtup in self.buffers.keys()):
-                self.buffers[IPtup] = {}
-                self.buffers[IPtup][srcport] = ''
         if(self.PRINT_BUFFERS):
             log.debug("Data: " + data)
             log.debug("Old Buffer: " + self.buffers[IPtup][srcport])   
