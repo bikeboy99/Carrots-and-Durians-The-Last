@@ -1,8 +1,7 @@
-from pox.core import core
+from pox import core
 from pox.lib.addresses import * 
 from pox.lib.packet import *
 from pox.lib.recoco.recoco import *
-import re
 
 # Get a logger
 log = core.getLogger("fw")
@@ -14,9 +13,10 @@ class Firewall (object):
   Don't change the name or anything -- the eecore component
   expects it to be firewall.Firewall.
   """
-  PRINT_BUFFERS = False
+  PRINT_BUFFERS = True
   TIMEOUT = 10
   BASIC_PORTS = 1024
+  FTP_PORTS = 65536
   
   def __init__(self):
     """
@@ -55,23 +55,24 @@ class Firewall (object):
     # Banned port
     IPtuple = (str(flow.dst), str(flow.src))
     port = str(flow.dstport)
-    
     if flow.dstport < self.BASIC_PORTS:
         if(flow.dstport == 21):
             #connection doesn't already exist
-            if(IPtuple in self.allowed_ports.keys()):
-                log.debug("Duplicate FPT connection BLOCKED: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
-                event.action.deny = True
-            else:
-                self.allowed_ports[IPtuple] = {}
-                log.debug("Allowed FTPcmd connection: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
-                self.mark_monitored(event, flow)
-                event.action.forward = True
+            #if(IPtuple in self.allowed_ports.keys()):
+            #    log.debug("Duplicate FPT connection BLOCKED: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
+            #    event.action.deny = True
+            #else:
+            self.allowed_ports[IPtuple] = {}
+            log.debug("Allowed FTPcmd connection: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
+            self.mark_monitored(event, flow)
+            event.action.forward = True
         else:
             log.debug("Allowed connection: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
             event.action.forward = True
         return
-    elif IPtuple in self.allowed_ports.keys():
+    elif IPtuple in self.allowed_ports.keys() and flow.dstport < self.FTP_PORTS:
+        log.debug("IP with allowed ports: " + IPtuple[0])
+        log.debug("Allowed ports: " + ', '.join(self.allowed_ports[IPtuple]))
         for srcport in self.allowed_ports[IPtuple].keys():
             if(port in self.allowed_ports[IPtuple][srcport]):
                 log.debug("Allowed FTP data connection to connect: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
@@ -80,9 +81,12 @@ class Firewall (object):
                 self.remove_port(IPtuple, srcport, port)
                 event.action.forward = True
                 return
-    else:
+        log.debug("DENIED connection, not using an open port: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
         event.action.deny = True
+        return
+    else:
         log.debug("DENIED connection: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
+        event.action.deny = True
         return
 
   def _handle_MonitorData (self, event, packet, reverse):
@@ -111,27 +115,19 @@ class Firewall (object):
     #now split line based on newline  
     split = data.splitlines()
     if(self.PRINT_BUFFERS):
-        log.debug("Split: " '---'.join(split))
+        log.debug("Split: " +  '---'.join(split))
     #if no EOL at end of string add it to buffer instead of processing now
     if(data != '' and data[-1] != '\n'):
         end = split[len(split)-1]
-        #no newline characters in data.  Add to previous buffer
-        if(len(split) == 1 and data != '' and data[0] != '\n'):
-            self.buffers[IPtup][str(tcp.srcport)] += end
-        #otherwise, reset the buffer and add the end part to it
-        else:
-            self.buffers[IPtup][str(tcp.srcport)] = end
+        self.buffers[IPtup][str(tcp.srcport)] = end
         #so buffer isn't processed
         split = split[0:len(split)-1]
-    else:
+    elif(data[-1] == '\n'):
         self.buffers[IPtup][str(tcp.srcport)] = ''
     if(self.PRINT_BUFFERS):
-        log.debug("Old Buffer: " + self.buffers[IPtup][str(tcp.srcport)])
+        log.debug("New Buffer: " + self.buffers[IPtup][str(tcp.srcport)])
     
     for line in split:
-        #TODO: handle line split or line padded cases
-        #handles padded case??
-        #line = line.strip()
         if(line[0:4] == '229 '):
             line = line.split('|')
             port = line[len(line)-2]
@@ -142,13 +138,14 @@ class Firewall (object):
             line = line.split('(')
             csvs = line[len(line)-1].split(')')[0] 
             ip_and_port = csvs.split(',')
-            IP = ip_and_port[0]+'.'+ip_and_port[1]+'.'+ip_and_port[2]+'.'+ip_and_port[3]
-            if(reverse):
-                IPtup = (IP, ip.dstip.toStr())
-            else:
-                IPtup = (IP, ip.srcip.toStr())
-            port = str(int(ip_and_port[4])*256+int(ip_and_port[5]))
-            self.open_port_with_timeout(port, IPtup, str(tcp.srcport), self.TIMEOUT)
+            if(len(ip_and_port) == 6):
+                IP = ip_and_port[0]+'.'+ip_and_port[1]+'.'+ip_and_port[2]+'.'+ip_and_port[3]
+                if(reverse):
+                    IPtup = (IP, ip.dstip.toStr())
+                else:
+                    IPtup = (IP, ip.srcip.toStr())
+                port = str(int(ip_and_port[4])*256+int(ip_and_port[5]))
+                self.open_port_with_timeout(port, IPtup, str(tcp.srcport), self.TIMEOUT)
         elif(line[0:4] == '226 '):
             #close port before timeout
             try:
