@@ -51,37 +51,30 @@ class Firewall (object):
     """
     
     # Banned port
-    IPtuple = (str(flow.dst), str(flow.src))
+    IPtup = (str(flow.dst), str(flow.src))
     port = str(flow.dstport)
     if flow.dstport < self.BASIC_PORTS:
         event.action.forward = True
         if(flow.dstport == 21):
-            #connection doesn't already exist
-            #if(IPtuple in self.allowed_ports.keys()):
-            #    log.debug("Duplicate FPT connection BLOCKED: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
-            #    event.action.deny = True
-            #else:
             log.debug("Allowed FTPcmd connection: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
             self.mark_monitored(event, flow)
         else:
             log.debug("Allowed connection: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
         return
-    elif IPtuple in self.allowed_ports.keys() and flow.dstport < self.FTP_PORTS:
-        log.debug("IP with allowed ports: " + IPtuple[0])
-        log.debug("Allowed ports: " + ', '.join( self.allowed_ports[IPtuple]))
-        if(port in self.allowed_ports[IPtuple]):
+    elif IPtup in self.allowed_ports.keys() and flow.dstport < self.FTP_PORTS:
+        log.debug("IP with allowed ports: " + IPtup[0])
+        log.debug("Allowed ports: " + ', '.join( self.allowed_ports[IPtup]))
+        if(port in self.allowed_ports[IPtup]):
             log.debug("Allowed FTP data connection to connect: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
             #remove once 1 TCP connection is made
             #cancel timer here. and delete timer.
-            ip_and_port = (IPtuple, str(flow.dstport))
-            if(len(self.timers[ip_and_port]) != 0):
-                self.timers[ip_and_port][0].cancel()
-                del(self.timers[ip_and_port][0])
+            ip_and_port = (IPtup, str(flow.dstport))
+            self.timers[ip_and_port][0].cancel()
+            del(self.timers[ip_and_port][0])
+            event.action.forward = True
             #port is no longer allowed if no more waiting timers for connections
             if(len(self.timers[ip_and_port]) == 0):
-                self.remove_port(IPtuple, port)
-
-            event.action.forward = True
+                self.remove_port(IPtup, port)
             return
         log.debug("DENIED connection, not using an open port: [" + str(flow.src) + ":" + str(flow.srcport) + "," + str(flow.dst) + ":" + str(flow.dstport) + "]")
         event.action.deny = True
@@ -119,7 +112,7 @@ class Firewall (object):
                 log.debug("Initializing Buffer for: " + IPtup[0])
         if(self.PRINT_BUFFERS):
             log.debug("Data: " + data)
-            log.debug("Old Buffer: " + self.buffers[IPtup][srcport])   
+            log.debug("Old Buffer: " + server_buffers[srcport])   
         
         #now split line based on newline  
         split = data.splitlines()
@@ -128,27 +121,33 @@ class Firewall (object):
         #if no EOL at end of string add it to buffer instead of processing now
         if(data != '' and data[-1] != '\n'):
             end = split[len(split)-1]
-            self.buffers[IPtup][srcport] = end
+            server_buffers[srcport] = end
             #so buffer isn't processed
             split = split[0:len(split)-1]
+        #if there is a newline at the end of our data, clear our buffer for next time 
         elif(data[-1] == '\n'):
-            self.buffers[IPtup][srcport] = ''
+            server_buffers[srcport] = ''
         if(self.PRINT_BUFFERS):
-            log.debug("New Buffer: " + self.buffers[IPtup][srcport])
+            log.debug("New Buffer: " + server_buffers[srcport])
         
+        #for each individual line in our data
         for line in split:
+            #EPSV mode
             if(line[0:4] == '229 '):
                 line = line.split('|')
+                #port should always be in 2nd to last partition based on spec and | as delimiter
                 port = line[len(line)-2]
-                #not sure about reverse, not sure if IP will be formatted correctly
                 self.open_port_with_timeout(port, IPtup, self.TIMEOUT)
-                #self.monitored_connections.remove(IPStr)
             elif(line[0:4]  == '227 '):
                 line = line.split('(')
+                #take the rightmost partition from a split based on open parens
                 csvs = line[len(line)-1].split(')')[0] 
+                #take the leftmost entry from a split based on closed parens.  This gives us our csv
                 ip_and_port = csvs.split(',')
+                #if there aren't 6 csv entries, don't do anything
                 if(len(ip_and_port) == 6):
                     IP = ip_and_port[0]+'.'+ip_and_port[1]+'.'+ip_and_port[2]+'.'+ip_and_port[3]
+                    #assign IPtup again, since we are given a specific IP for 227
                     if(reverse):
                         IPtup = (IP, ip.dstip.toStr())
                     else:
@@ -165,6 +164,7 @@ class Firewall (object):
     if(not IPtup in self.allowed_ports.keys()):
         self.allowed_ports[IPtup] = set([])
     self.allowed_ports[IPtup].add(port)
+    
     if(ip_and_ports not in self.timers.keys()):
         self.timers[ip_and_ports] = []
     self.timers[ip_and_ports].append(Timer(timeout, self.handle_timeout, args = [IPtup, port]))
@@ -184,11 +184,11 @@ class Firewall (object):
     event.action.monitor_backward = True
         
   def handle_timeout(self, IPtup, port):
-    ip_and_port = (IPtup, port)
+    ip_and_ports = (IPtup, port)
     if(IPtup in self.allowed_ports.keys()):
         log.debug("Port timeout: " + IPtup[0] + ':' + port)
         self.remove_port(IPtup, port)
-    del(self.timers[ip_and_port][0])
+    del(self.timers[ip_and_ports][0])
     
   def remove_port(self, IPtup, port):
     try:
