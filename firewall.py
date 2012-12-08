@@ -2,6 +2,7 @@ from pox import core
 from pox.lib.addresses import * 
 from pox.lib.packet import *
 from pox.lib.recoco.recoco import *
+import re
 
 # Get a logger
 log = core.getLogger("fw")
@@ -130,34 +131,52 @@ class Firewall (object):
         if(self.PRINT_BUFFERS):
             log.debug("New Buffer: " + server_buffers[srcport])
         
-        #for each individual line in our data
+        port_227_regex = "\([0-9]{1,3},[0-9]{1,3},[0-9]{1,3},[0-9]{1,3},[0-9]{1,5},[0-9]{1,5}\)\.?$"
+        port_229_regex = "\(\|\|\|[0-9]{4,5}\|\)\.?$"
+       
+        #for each individual FULL line in our data
         for line in split:
             try:
                 if(len(line) > 3):
                     if(line[0:4] == '229 '):
-                        line = line.split('|')
-                        #port should always be in 2nd to last partition based on spec and | as delimiter
-                        port = line[len(line)-2]
-                        self.open_port_with_timeout(port, IPtup, self.TIMEOUT)
+                        try:
+                            re_result = re.search(port_229_regex, line)
+                            if re_result:
+                                port = int(re_result.group(0).split("|")[3])
+                                if port >= self.BASIC_PORTS and port < self.FTP_PORTS:
+                                    self.open_port_with_timeout(str(port), IPtup, self.TIMEOUT)
+                        except:
+                            log.debug("Exception 229")
+                            continue
+                        
                     elif(line[0:4]  == '227 '):
-                        line = line.split('(')
-                        #take the rightmost partition from a split based on open parens
-                        csvs = line[len(line)-1].split(')')[0] 
-                        #take the leftmost entry from a split based on closed parens.  This gives us our csv
-                        ip_and_port = csvs.split(',')
-                        #if there aren't 6 csv entries, don't do anything
-                        if(len(ip_and_port) == 6):
-                            IP = ip_and_port[0]+'.'+ip_and_port[1]+'.'+ip_and_port[2]+'.'+ip_and_port[3]
-                            #assign IPtup again, since we are given a specific IP for 227
-                            if(reverse):
-                                IPtup = (IP, ip.dstip.toStr())
-                            else:
-                                IPtup = (IP, ip.srcip.toStr())
-                            port = str(int(ip_and_port[4])*256+int(ip_and_port[5]))
-                            self.open_port_with_timeout(port, IPtup, self.TIMEOUT)
+                        try:
+                            re_result = re.search(port_227_regex, line)
+                            if re_result:
+                                split_result = re_result.group(0).split('(')[1]
+                                split_result = split_result.split(')')[0]
+                                split_result = split_result.split(",")
+                                
+                                IP = split_result[0]+'.'+ split_result[1]+ '.' + split_result[2]+'.' + split_result[3]
+                                if (reverse):
+                                    IPtup = (IP, ip.dstip.toStr())
+                                else:
+                                    IPtup = (IP, ip.srcip.toStr())
+                                port = int(split_result[4])*256+int(split_result[5])
+                                if port >= self.BASIC_PORTS and port < self.FTP_PORTS:
+                                    self.open_port_with_timeout(str(port), IPtup, self.TIMEOUT)
+                        except:
+                            log.debug("Exception 227")
+                            continue
+                        
             except:
-                pass
+                log.debug("IF YOU SEE THIS MESSAGE, BE VERY SCARED.  BE VERY FREAKING SCARED.  BECAUSE IT'S ALL ABOUT TO BE COMING DOWN")
+                log.debug("WHY IS THIS COMING HERE")
+                continue
     except:
+        log.debug("IF YOU SEE THIS MESSAGE, BE VERY SCARED.  BE VERY FREAKING SCARED.  BECAUSE IT'S ALL ABOUT TO BE COMING DOWN")
+        log.debug("IF YOU SEE THIS MESSAGE, BE VERY SCARED.  BE VERY FREAKING SCARED.  BECAUSE IT'S ALL ABOUT TO BE COMING DOWN!!!!!!!!!!")
+        log.debug("IF YOU SEE THIS MESSAGE, BE VERY SCARED.  BE VERY FREAKING SCARED.  BECAUSE IT'S ALL ABOUT TO BE COMING DOWN!!!!!!!!!!!!!!!!!!!!!!!!!")
         pass
             
   def open_port_with_timeout(self, port, IPtup, timeout):
